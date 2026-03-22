@@ -12,21 +12,32 @@ async function loadKuzu() {
   return kuzuMod;
 }
 
-export async function connect(dbPath: string): Promise<void> {
+export async function connect(dbPath: string, readOnly = false): Promise<void> {
   await disconnect();
   const mod = await loadKuzu();
-  db = new mod.Database(dbPath);
-  conn = new mod.Connection(db);
+  const newDb = new mod.Database(dbPath, 0, true, readOnly);
+  const newConn = new mod.Connection(newDb);
+  // Eagerly initialize to surface errors (e.g. lock, missing file) immediately
+  try {
+    await newDb.init();
+  } catch (err) {
+    try { await newDb.close(); } catch { /* ignore cleanup error */ }
+    throw err;
+  }
+  db = newDb;
+  conn = newConn;
 }
 
 export async function disconnect(): Promise<void> {
-  if (conn) {
-    conn.close();
-    conn = null;
+  const c = conn;
+  const d = db;
+  conn = null;
+  db = null;
+  if (c) {
+    try { await c.close(); } catch { /* ignore */ }
   }
-  if (db) {
-    db.close();
-    db = null;
+  if (d) {
+    try { await d.close(); } catch { /* ignore */ }
   }
 }
 
@@ -114,14 +125,9 @@ export async function executeQuery(cypher: string): Promise<QueryResult> {
   const table = await result.getAll();
   if (Array.isArray(table)) {
     for (const row of table) {
-      const rowObj: Record<string, unknown> = {};
-
-      for (const [key, val] of Object.entries(row as Record<string, unknown>)) {
-        rowObj[key] = val;
+      for (const [, val] of Object.entries(row as Record<string, unknown>)) {
         extractGraphElements(val, nodesMap, edgesMap);
       }
-
-      rawRows.push(rowObj);
     }
   }
 
@@ -158,7 +164,12 @@ function extractGraphElements(
       const properties: Record<string, unknown> = {};
       for (const [pk, pv] of Object.entries(obj)) {
         if (!pk.startsWith('_')) {
-          properties[pk] = pv;
+          // Truncate large string properties to keep payloads manageable
+          if (typeof pv === 'string' && pv.length > 500) {
+            properties[pk] = pv.slice(0, 500) + '…';
+          } else {
+            properties[pk] = pv;
+          }
         }
       }
       nodesMap.set(nodeId, {

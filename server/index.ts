@@ -17,13 +17,14 @@ app.get('/api/health', (_req, res) => {
 
 // Connect to a database
 app.post('/api/connect', async (req, res) => {
-  const { dbType, uri, username, password, database, dbPath } = req.body as {
+  const { dbType, uri, username, password, database, dbPath, readOnly } = req.body as {
     dbType: DbType;
     uri?: string;
     username?: string;
     password?: string;
     database?: string;
     dbPath?: string;
+    readOnly?: boolean;
   };
 
   try {
@@ -43,7 +44,7 @@ app.post('/api/connect', async (req, res) => {
         res.status(400).json({ success: false, error: 'Missing KuzuDB path (dbPath)' });
         return;
       }
-      await kuzuService.connect(dbPath);
+      await kuzuService.connect(dbPath, readOnly ?? false);
       activeDb = 'kuzu';
     } else {
       res.status(400).json({ success: false, error: `Unsupported dbType: ${String(dbType)}` });
@@ -98,10 +99,25 @@ app.post('/api/query', async (req, res) => {
       res.status(400).json({ success: false, error: 'Not connected to any database' });
       return;
     }
+
+    // Inject safety LIMIT if query doesn't have one to prevent fetching entire DB
+    const MAX_RESULTS = 5000;
+    const hasLimit = /\bLIMIT\s+\d+/i.test(cypher);
+    const safeCypher = hasLimit ? cypher : `${cypher.trimEnd()} LIMIT ${MAX_RESULTS}`;
+
     const result = activeDb === 'neo4j'
-      ? await neo4jService.executeQuery(cypher)
-      : await kuzuService.executeQuery(cypher);
-    res.json({ success: true, data: result });
+      ? await neo4jService.executeQuery(safeCypher)
+      : await kuzuService.executeQuery(safeCypher);
+
+    // Strip raw rows from response (unused by frontend) and add metadata
+    const { raw, ...rest } = result;
+    const response = {
+      ...rest,
+      totalNodes: result.graph.nodes.length,
+      totalEdges: result.graph.edges.length,
+      limitApplied: hasLimit ? undefined : MAX_RESULTS,
+    };
+    res.json({ success: true, data: response });
   } catch (err) {
     res.status(500).json({ success: false, error: err instanceof Error ? err.message : 'Query failed' });
   }
@@ -111,3 +127,12 @@ const PORT = parseInt(process.env.PORT || '3001', 10);
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });
+
+// Graceful shutdown: release database locks on exit
+async function shutdown() {
+  if (activeDb === 'neo4j') await neo4jService.disconnect();
+  if (activeDb === 'kuzu') await kuzuService.disconnect();
+  process.exit(0);
+}
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);

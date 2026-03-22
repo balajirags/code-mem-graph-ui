@@ -30,7 +30,7 @@ export interface SigmaEdgeAttributes {
  * Inspired by GitNexus's graph-adapter with radial/hierarchy positioning.
  */
 export function graphDataToGraphology(data: GraphData): Graph<SigmaNodeAttributes, SigmaEdgeAttributes> {
-  const graph = new Graph<SigmaNodeAttributes, SigmaEdgeAttributes>();
+  const graph = new Graph<SigmaNodeAttributes, SigmaEdgeAttributes>({ multi: true });
   const nodeCount = data.nodes.length;
   if (nodeCount === 0) return graph;
 
@@ -81,19 +81,22 @@ export function graphDataToGraphology(data: GraphData): Graph<SigmaNodeAttribute
   });
 
   // Add edges with adaptive sizing
+  // Use straight lines for large graphs to reduce GPU memory pressure
+  const edgeCount = data.edges.length;
   const edgeBaseSize = nodeCount > 5000 ? 0.5 : nodeCount > 1000 ? 1 : 1.5;
+  const useCurved = edgeCount <= 1000;
 
   data.edges.forEach((edge) => {
     if (graph.hasNode(edge.source) && graph.hasNode(edge.target)) {
       const edgeKey = `${edge.source}-${edge.type}-${edge.target}`;
       if (!graph.hasEdge(edgeKey)) {
-        const curvature = 0.15 + Math.random() * 0.1;
         graph.addEdgeWithKey(edgeKey, edge.source, edge.target, {
           size: edgeBaseSize,
           color: getEdgeColor(edge.type),
           relationType: edge.type,
-          type: 'curved',
-          curvature,
+          ...(useCurved
+            ? { type: 'curved', curvature: 0.15 + Math.random() * 0.1 }
+            : { type: 'line' }),
         });
       }
     }

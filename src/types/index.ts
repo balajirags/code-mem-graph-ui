@@ -9,6 +9,7 @@ export interface ConnectionConfig {
   database?: string;
   // KuzuDB
   dbPath?: string;
+  readOnly?: boolean;
 }
 
 export interface GraphNode {

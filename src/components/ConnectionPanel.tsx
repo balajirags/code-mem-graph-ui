@@ -15,6 +15,7 @@ export function ConnectionPanel() {
 
   // KuzuDB fields
   const [dbPath, setDbPath] = useState('');
+  const [readOnly, setReadOnly] = useState(true);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -26,6 +27,7 @@ export function ConnectionPanel() {
       config.database = database;
     } else {
       config.dbPath = dbPath;
+      config.readOnly = readOnly;
     }
     try {
       await connect(config);
@@ -137,6 +139,16 @@ export function ConnectionPanel() {
                   required
                 />
                 <p className="text-xs text-gray-500 mt-1.5">Absolute path to the KuzuDB directory on the server</p>
+                <div className="flex items-center gap-2 mt-3">
+                  <input
+                    type="checkbox"
+                    id="readOnly"
+                    checked={readOnly}
+                    onChange={e => setReadOnly(e.target.checked)}
+                    className="rounded border-[#2a2a3a] bg-[#0a0a12] text-indigo-500 focus:ring-indigo-500/20"
+                  />
+                  <label htmlFor="readOnly" className="text-xs text-gray-400">Open read-only (allows access when another process has the DB open)</label>
+                </div>
               </div>
             )}
           </div>

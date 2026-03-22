@@ -99,7 +99,21 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       setGraphData(result.graph);
       setLastQueryTime(result.executionTime);
     } catch (err) {
-      setQueryError(err instanceof Error ? err.message : 'Query failed');
+      const msg = err instanceof Error ? err.message : 'Query failed';
+      // If server lost connection (e.g. after restart), reset to disconnected
+      if (msg.includes('Not connected')) {
+        setIsConnected(false);
+        setDbType(null);
+        setConnectionConfig(null);
+        setSchema(null);
+        setGraphData(null);
+        setSelectedNode(null);
+        setQueryError(null);
+        setLastQueryTime(null);
+        setConnectionError('Server connection lost. Please reconnect.');
+        return;
+      }
+      setQueryError(msg);
       throw err;
     } finally {
       setIsQuerying(false);

@@ -7,6 +7,10 @@ import noverlap from 'graphology-layout-noverlap';
 import EdgeCurveProgram from '@sigma/edge-curve';
 import type { SigmaNodeAttributes, SigmaEdgeAttributes } from '../lib/graph-adapter';
 
+// Thresholds for progressive degradation on large graphs
+const LARGE_GRAPH_EDGES = 1000;
+const LARGE_GRAPH_NODES = 800;
+
 const hexToRgb = (hex: string) => {
   const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
   return result
@@ -58,7 +62,7 @@ export function useSigma(options: UseSigmaOptions = {}) {
   useEffect(() => {
     if (!containerRef.current) return;
 
-    const graph = new Graph<SigmaNodeAttributes, SigmaEdgeAttributes>();
+    const graph = new Graph<SigmaNodeAttributes, SigmaEdgeAttributes>({ multi: true });
     graphRef.current = graph;
 
     const sigma = new Sigma(graph, containerRef.current, {
@@ -76,7 +80,7 @@ export function useSigma(options: UseSigmaOptions = {}) {
       edgeProgramClasses: { curved: EdgeCurveProgram },
       minCameraRatio: 0.002,
       maxCameraRatio: 50,
-      hideEdgesOnMove: false,
+      hideEdgesOnMove: true,
       zIndex: true,
 
       defaultDrawNodeHover: (context, data, settings) => {
@@ -171,6 +175,17 @@ export function useSigma(options: UseSigmaOptions = {}) {
 
     sigmaRef.current = sigma;
 
+    // Detect WebGL context loss
+    const canvas = containerRef.current.querySelector('canvas');
+    if (canvas) {
+      canvas.addEventListener('webglcontextlost', (e) => {
+        console.error('[Sigma] WebGL context lost!', e);
+      });
+      canvas.addEventListener('webglcontextrestored', () => {
+        console.log('[Sigma] WebGL context restored');
+      });
+    }
+
     sigma.on('clickNode', ({ node }) => {
       setSelectedNode(node);
       options.onNodeClick?.(node);
@@ -227,19 +242,33 @@ export function useSigma(options: UseSigmaOptions = {}) {
       edgeWeightInfluence: 1,
     };
 
-    const layout = new FA2Layout(graph, { settings });
-    layoutRef.current = layout;
-    layout.start();
-    setIsLayoutRunning(true);
+    try {
+      const layout = new FA2Layout(graph, { settings });
+      layoutRef.current = layout;
+      layout.start();
+      setIsLayoutRunning(true);
+      console.log('[Sigma] FA2 layout started for', nodeCount, 'nodes');
+    } catch (err) {
+      console.error('[Sigma] FA2 layout failed to start:', err);
+      // Graph will render with initial spiral positions — still usable
+      sigmaRef.current?.refresh();
+      return;
+    }
 
-    const duration = nodeCount > 5000 ? 20000 : nodeCount > 1000 ? 12000 : 8000;
+    const duration = nodeCount > 5000 ? 20000 : nodeCount > 1000 ? 8000 : 5000;
     layoutTimeoutRef.current = setTimeout(() => {
       if (layoutRef.current) {
         layoutRef.current.stop();
         layoutRef.current = null;
-        noverlap.assign(graph, { maxIterations: 20, settings: { ratio: 1.1, margin: 10, expansion: 1.05 } });
+        // Skip noverlap for large graphs — it's synchronous and blocks the main thread
+        if (nodeCount <= LARGE_GRAPH_NODES) {
+          noverlap.assign(graph, { maxIterations: 20, settings: { ratio: 1.1, margin: 10, expansion: 1.05 } });
+        }
         sigmaRef.current?.refresh();
+        // Re-fit camera after layout settles
+        sigmaRef.current?.getCamera().animatedReset({ duration: 300 });
         setIsLayoutRunning(false);
+        console.log('[Sigma] layout finished for', nodeCount, 'nodes');
       }
     }, duration);
   }, []);
@@ -250,11 +279,28 @@ export function useSigma(options: UseSigmaOptions = {}) {
     if (layoutRef.current) { layoutRef.current.kill(); layoutRef.current = null; }
     if (layoutTimeoutRef.current) { clearTimeout(layoutTimeoutRef.current); layoutTimeoutRef.current = null; }
 
-    graphRef.current = newGraph;
-    sigma.setGraph(newGraph);
-    setSelectedNode(null);
-    runLayout(newGraph);
-    sigma.getCamera().animatedReset({ duration: 500 });
+    const nodeCount = newGraph.order;
+    const edgeCount = newGraph.size;
+
+    // Adapt render settings for large graphs
+    sigma.setSetting('hideEdgesOnMove', edgeCount > LARGE_GRAPH_EDGES);
+    sigma.setSetting('labelRenderedSizeThreshold', nodeCount > LARGE_GRAPH_NODES ? 10 : 5);
+    sigma.setSetting('labelDensity', nodeCount > LARGE_GRAPH_NODES ? 0.1 : 0.25);
+    // Switch to built-in line program for large graphs (EdgeCurveProgram is too heavy)
+    sigma.setSetting('defaultEdgeType', edgeCount > LARGE_GRAPH_EDGES ? 'line' : 'curved');
+
+    try {
+      graphRef.current = newGraph;
+      console.log('[Sigma] setGraph called with', newGraph.order, 'nodes,', newGraph.size, 'edges');
+      sigma.setGraph(newGraph);
+      console.log('[Sigma] setGraph succeeded');
+      setSelectedNode(null);
+      runLayout(newGraph);
+      console.log('[Sigma] layout started');
+      sigma.getCamera().animatedReset({ duration: 500 });
+    } catch (err) {
+      console.error('[Sigma] Failed to render graph:', err);
+    }
   }, [runLayout, setSelectedNode]);
 
   const focusNode = useCallback((nodeId: string) => {
@@ -289,7 +335,7 @@ export function useSigma(options: UseSigmaOptions = {}) {
       layoutRef.current.stop();
       layoutRef.current = null;
       const graph = graphRef.current;
-      if (graph) {
+      if (graph && graph.order <= LARGE_GRAPH_NODES) {
         noverlap.assign(graph, { maxIterations: 20, settings: { ratio: 1.1, margin: 10, expansion: 1.05 } });
         sigmaRef.current?.refresh();
       }

@@ -7,6 +7,8 @@ import { graphDataToGraphology } from '../lib/graph-adapter';
 export function GraphCanvas() {
   const { graphData, setSelectedNode, selectedNode } = useAppState();
   const [hoveredNodeLabel, setHoveredNodeLabel] = useState<string | null>(null);
+  const [graphStats, setGraphStats] = useState<{ nodes: number; edges: number } | null>(null);
+  const [renderError, setRenderError] = useState<string | null>(null);
 
   const handleNodeClick = useCallback((nodeId: string) => {
     if (!graphData) return;
@@ -51,10 +53,33 @@ export function GraphCanvas() {
 
   // When graphData changes, convert to graphology and render
   useEffect(() => {
-    if (!graphData) return;
-    const sigmaGraph = graphDataToGraphology(graphData);
-    setSigmaGraph(sigmaGraph);
-  }, [graphData, setSigmaGraph]);
+    if (!graphData) {
+      setGraphStats(null);
+      setRenderError(null);
+      return;
+    }
+    try {
+      setRenderError(null);
+      console.log('[GraphCanvas] graphData received:', graphData.nodes.length, 'nodes,', graphData.edges.length, 'edges');
+      const sigmaGraph = graphDataToGraphology(graphData);
+      console.log('[GraphCanvas] graphology graph created:', sigmaGraph.order, 'nodes,', sigmaGraph.size, 'edges');
+      // Log container dimensions to catch zero-size issues
+      const container = containerRef.current;
+      if (container) {
+        const rect = container.getBoundingClientRect();
+        console.log('[GraphCanvas] container dimensions:', rect.width, 'x', rect.height);
+        if (rect.width === 0 || rect.height === 0) {
+          console.error('[GraphCanvas] Container has zero dimensions!');
+          setRenderError('Container has zero dimensions');
+        }
+      }
+      setGraphStats({ nodes: sigmaGraph.order, edges: sigmaGraph.size });
+      setSigmaGraph(sigmaGraph);
+    } catch (err) {
+      console.error('[GraphCanvas] Failed to build graph:', err);
+      setRenderError(err instanceof Error ? err.message : 'Unknown error');
+    }
+  }, [graphData, setSigmaGraph, containerRef]);
 
   // Sync app selected node with sigma
   useEffect(() => {
@@ -103,6 +128,22 @@ export function GraphCanvas() {
             <div className="text-gray-500 text-lg font-medium">No graph data</div>
             <div className="text-gray-600 text-sm mt-1">Run a Cypher query to visualize the graph</div>
           </div>
+        </div>
+      )}
+
+      {/* Render error */}
+      {renderError && (
+        <div className="absolute top-4 left-4 px-3 py-2 bg-red-500/20 border border-red-500/40 rounded-lg z-20">
+          <span className="text-xs text-red-400 font-mono">Render error: {renderError}</span>
+        </div>
+      )}
+
+      {/* Graph stats badge */}
+      {graphStats && !renderError && (
+        <div className="absolute top-4 left-4 px-3 py-1.5 bg-[#12121c]/90 border border-[#2a2a3a] rounded-lg z-20 pointer-events-none">
+          <span className="text-xs text-gray-400 font-mono">
+            {graphStats.nodes.toLocaleString()} nodes &middot; {graphStats.edges.toLocaleString()} edges
+          </span>
         </div>
       )}
 

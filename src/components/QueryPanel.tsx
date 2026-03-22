@@ -11,7 +11,7 @@ const SAMPLE_QUERIES = [
 
 export function QueryPanel() {
   const { executeQuery, isQuerying, queryError, lastQueryTime, schema } = useAppState();
-  const [cypher, setCypher] = useState('MATCH (n)-[r]->(m) RETURN n, r, m LIMIT 200');
+  const [cypher, setCypher] = useState('MATCH (n)-[r]->(m) RETURN n, r, m');
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
